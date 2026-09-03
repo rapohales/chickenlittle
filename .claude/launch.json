@@ -5,9 +5,8 @@
       "name": "chickenlit-dev",
       "runtimeExecutable": "C:\\Estudo\\node\\node.exe",
       "runtimeArgs": [
-        "chickenlit/node_modules/next/dist/bin/next",
+        "node_modules/next/dist/bin/next",
         "dev",
-        "chickenlit",
         "-p",
         "3000"
       ],

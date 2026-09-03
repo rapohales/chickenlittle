@@ -7,6 +7,7 @@ import { MONTHS, WEEKDAYS, monthGrid, toKey, todayKey, weekKeys } from "@/lib/da
 import { ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon } from "./icons";
 import ProfilePicker from "./ProfilePicker";
 import DayModal from "./DayModal";
+import WeekSummaryModal from "./WeekSummaryModal";
 
 const ME_KEY = "cl-me";
 const logKey = (pid: string, day: string) => `${pid}|${day}`;
@@ -22,6 +23,7 @@ export default function CalendarApp() {
   const [view, setView] = useState({ year: now.getFullYear(), month: now.getMonth() });
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showWeekSummary, setShowWeekSummary] = useState(false);
 
   // ---- carregamento de dados ------------------------------------------
   const fetchPeople = useCallback(async () => {
@@ -126,41 +128,32 @@ export default function CalendarApp() {
         </button>
       </header>
 
-      {/* Painel do casal */}
-      <section className="grid grid-cols-2 gap-3">
-        {people.map((p) => {
-          const c = ACCENTS[p.accent];
-          const s = weekStats(p.id);
-          const today = getLog(p.id, tKey);
-          return (
-            <div key={p.id} className="rounded-2xl border border-border bg-surface p-3"
-              style={{ borderColor: p.id === meId ? c.soft : "var(--border)" }}>
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
-                  style={{ background: c.soft, color: c.base }}>{p.name.charAt(0).toUpperCase()}</span>
-                <span className="truncate text-sm font-semibold">{p.name}</span>
-              </div>
-              <p className="mt-2 text-[11px] uppercase tracking-wide text-muted">Essa semana</p>
-              <div className="mt-1 flex items-center gap-3">
-                <span className="flex items-center gap-1 text-sm font-bold" style={{ color: c.base }}>
-                  <DumbbellIcon size={16} /> {s.gym}
+      {/* Resumo compacto da semana */}
+      <button
+        onClick={() => setShowWeekSummary(true)}
+        className="flex items-center gap-2 py-1 text-left transition active:opacity-60"
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+          {people.map((p, i) => {
+            const c = ACCENTS[p.accent];
+            const s = weekStats(p.id);
+            return (
+              <span key={p.id} className="flex min-w-0 shrink-0 items-center gap-1.5 text-[13px]">
+                {i > 0 && <span className="text-muted">·</span>}
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: c.base }} />
+                <span className="max-w-[64px] truncate text-muted">{p.name}</span>
+                <span className="flex shrink-0 items-center gap-0.5 font-semibold" style={{ color: c.base }}>
+                  <DumbbellIcon size={12} />{s.gym}
                 </span>
-                <span className="flex items-center gap-1 text-sm font-bold" style={{ color: c.base }}>
-                  <SaladIcon size={16} /> {s.diet}
+                <span className="flex shrink-0 items-center gap-0.5 font-semibold" style={{ color: c.base }}>
+                  <SaladIcon size={12} />{s.diet}
                 </span>
-              </div>
-              <p className="mt-2 text-[11px] text-muted">
-                Hoje:{" "}
-                {today?.gym || today?.diet ? (
-                  <span style={{ color: c.base }}>
-                    {today?.gym ? "academia " : ""}{today?.diet ? "dieta" : ""}
-                  </span>
-                ) : "ainda não"}
-              </p>
-            </div>
-          );
-        })}
-      </section>
+              </span>
+            );
+          })}
+        </span>
+        <span className="shrink-0 text-xs text-muted">semana ›</span>
+      </button>
 
       {/* Navegação do mês */}
       <div className="mt-6 mb-2 flex items-center justify-between">
@@ -221,6 +214,14 @@ export default function CalendarApp() {
           otherLog={other ? getLog(other.id, selectedDay) : undefined}
           onClose={() => setSelectedDay(null)}
           onSave={(patch) => saveLog(selectedDay, patch)}
+        />
+      )}
+
+      {showWeekSummary && (
+        <WeekSummaryModal
+          people={people}
+          statsFor={weekStats}
+          onClose={() => setShowWeekSummary(false)}
         />
       )}
 

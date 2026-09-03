@@ -52,7 +52,7 @@ export default function DayModal({ dayKey, me, other, myLog, otherLog, onClose, 
 
         <div className="mt-3 grid grid-cols-2 gap-3">
           <Toggle active={gym} accent={c.base} soft={c.soft} onClick={() => setGym((v) => !v)} label="Academia" icon={<DumbbellIcon size={26} />} />
-          <Toggle active={diet} accent={c.base} soft={c.soft} onClick={() => setDiet((v) => !v)} label="Dieta" icon={<SaladIcon size={26} />} />
+          <Toggle active={diet} accent={c.base} soft={c.soft} onClick={() => setDiet((v) => !v)} label="Comi Bem" icon={<SaladIcon size={26} />} />
         </div>
 
         <label className="mt-4 block text-sm text-muted">Observações</label>
@@ -71,8 +71,8 @@ export default function DayModal({ dayKey, me, other, myLog, otherLog, onClose, 
             </p>
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
               {otherLog?.gym && <Tag accent={ACCENTS[other.accent].base}><DumbbellIcon size={14} /> Academia</Tag>}
-              {otherLog?.diet && <Tag accent={ACCENTS[other.accent].base}><SaladIcon size={14} /> Dieta</Tag>}
-              {!otherLog?.gym && !otherLog?.diet && <span className="text-muted">Sem treino/dieta</span>}
+              {otherLog?.diet && <Tag accent={ACCENTS[other.accent].base}><SaladIcon size={14} /> Comi Bem</Tag>}
+              {!otherLog?.gym && !otherLog?.diet && <span className="text-muted">Sem treino/comida</span>}
             </div>
             {otherLog?.notes && <p className="mt-1.5 text-xs text-muted italic">“{otherLog.notes}”</p>}
           </div>
