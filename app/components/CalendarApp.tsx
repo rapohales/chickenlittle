@@ -7,7 +7,7 @@ import { MONTHS, WEEKDAYS, monthGrid, toKey, todayKey, weekKeys } from "@/lib/da
 import { ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon } from "./icons";
 import ProfilePicker from "./ProfilePicker";
 import DayModal from "./DayModal";
-import WeekSummaryModal from "./WeekSummaryModal";
+import ProgressModal from "./ProgressModal";
 
 const ME_KEY = "cl-me";
 const logKey = (pid: string, day: string) => `${pid}|${day}`;
@@ -23,7 +23,7 @@ export default function CalendarApp() {
   const [view, setView] = useState({ year: now.getFullYear(), month: now.getMonth() });
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showWeekSummary, setShowWeekSummary] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
 
   // ---- carregamento de dados ------------------------------------------
   const fetchPeople = useCallback(async () => {
@@ -130,7 +130,7 @@ export default function CalendarApp() {
 
       {/* Resumo compacto da semana */}
       <button
-        onClick={() => setShowWeekSummary(true)}
+        onClick={() => setShowProgress(true)}
         className="flex items-center gap-2 py-1 text-left transition active:opacity-60"
       >
         <span className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
@@ -152,7 +152,7 @@ export default function CalendarApp() {
             );
           })}
         </span>
-        <span className="shrink-0 text-xs text-muted">semana ›</span>
+        <span className="shrink-0 text-xs text-muted">progresso ›</span>
       </button>
 
       {/* Navegação do mês */}
@@ -183,13 +183,16 @@ export default function CalendarApp() {
               key={key}
               disabled={isFuture}
               onClick={() => setSelectedDay(key)}
-              className="relative flex aspect-square flex-col items-center rounded-xl border p-1 transition active:scale-95 disabled:opacity-30"
+              className="relative flex aspect-square flex-col items-center rounded-xl border p-1 transition-all duration-100 active:translate-y-px active:scale-[0.96] active:shadow-none disabled:opacity-30 disabled:shadow-none"
               style={{
                 borderColor: isToday ? ACCENTS[me.accent].base : "var(--border)",
-                background: isToday ? ACCENTS[me.accent].soft : "var(--surface)",
+                background: isToday ? ACCENTS[me.accent].soft : "var(--surface-2)",
+                boxShadow: isToday
+                  ? `0 2px 0 0 ${ACCENTS[me.accent].base}66`
+                  : "0 2px 0 0 rgba(0,0,0,0.45)",
               }}
             >
-              <span className={`text-xs font-semibold ${isToday ? "" : "text-foreground"}`}
+              <span className={`text-[13px] font-bold ${isToday ? "" : "text-foreground"}`}
                 style={isToday ? { color: ACCENTS[me.accent].base } : undefined}>
                 {date.getDate()}
               </span>
@@ -217,11 +220,11 @@ export default function CalendarApp() {
         />
       )}
 
-      {showWeekSummary && (
-        <WeekSummaryModal
+      {showProgress && (
+        <ProgressModal
           people={people}
-          statsFor={weekStats}
-          onClose={() => setShowWeekSummary(false)}
+          logs={logs}
+          onClose={() => setShowProgress(false)}
         />
       )}
 
