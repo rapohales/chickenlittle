@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-import { ACCENTS, type Accent, type DayLog, type Person } from "@/lib/types";
+import { ACCENTS, type Accent, type DayLog, type Person, type Workout } from "@/lib/types";
 import { MONTHS, WEEKDAYS, monthGrid, toKey, todayKey, weekKeys } from "@/lib/dates";
+import { gymPerWeek, workoutCounts } from "@/lib/points";
 import { ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon } from "./icons";
 import ProfilePicker from "./ProfilePicker";
 import DayModal from "./DayModal";
@@ -15,6 +16,7 @@ const logKey = (pid: string, day: string) => `${pid}|${day}`;
 export default function CalendarApp() {
   const [people, setPeople] = useState<Person[]>([]);
   const [logs, setLogs] = useState<Record<string, DayLog>>({});
+  const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [meId, setMeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,11 +42,17 @@ export default function CalendarApp() {
     setLogs(map);
   }, []);
 
+  const fetchWorkouts = useCallback(async () => {
+    const { data, error } = await supabase.from("workouts").select("*").order("created_at");
+    if (error) { setError(error.message); return; }
+    setWorkouts((data as Workout[]) ?? []);
+  }, []);
+
   useEffect(() => {
     if (!isSupabaseConfigured) { setLoading(false); return; }
     setMeId(localStorage.getItem(ME_KEY));
     (async () => {
-      await Promise.all([fetchPeople(), fetchLogs()]);
+      await Promise.all([fetchPeople(), fetchLogs(), fetchWorkouts()]);
       setLoading(false);
     })();
 
@@ -52,14 +60,32 @@ export default function CalendarApp() {
       .channel("day_logs-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "day_logs" }, fetchLogs)
       .on("postgres_changes", { event: "*", schema: "public", table: "people" }, fetchPeople)
+      .on("postgres_changes", { event: "*", schema: "public", table: "workouts" }, fetchWorkouts)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [fetchPeople, fetchLogs]);
+  }, [fetchPeople, fetchLogs, fetchWorkouts]);
 
   // ---- derivados -------------------------------------------------------
   const me = useMemo(() => people.find((p) => p.id === meId) ?? null, [people, meId]);
   const other = useMemo(() => people.find((p) => p.id !== meId) ?? null, [people, meId]);
   const getLog = useCallback((pid: string, day: string) => logs[logKey(pid, day)], [logs]);
+
+  const workoutById = useMemo(
+    () => new Map(workouts.map((w) => [w.id, w])),
+    [workouts],
+  );
+  const myWorkouts = useMemo(
+    () => workouts.filter((w) => w.person_id === meId),
+    [workouts, meId],
+  );
+  // Nome do treino registrado por uma pessoa num dia (null se não houver).
+  const workoutNameOf = useCallback(
+    (pid: string, day: string) => {
+      const id = getLog(pid, day)?.workout_id;
+      return id ? workoutById.get(id)?.name ?? null : null;
+    },
+    [getLog, workoutById],
+  );
 
   const weekStats = useCallback((pid: string) => {
     const wk = weekKeys();
@@ -73,7 +99,10 @@ export default function CalendarApp() {
   }, [getLog]);
 
   // ---- mutações --------------------------------------------------------
-  const saveLog = useCallback(async (day: string, patch: { gym: boolean; diet: boolean; notes: string }) => {
+  const saveLog = useCallback(async (
+    day: string,
+    patch: { gym: boolean; diet: boolean; notes: string; workout_id: string | null },
+  ) => {
     if (!meId) return;
     const row: DayLog = { person_id: meId, day, ...patch, updated_at: new Date().toISOString() };
     setLogs((prev) => ({ ...prev, [logKey(meId, day)]: row })); // otimista
@@ -81,6 +110,19 @@ export default function CalendarApp() {
     const { error } = await supabase.from("day_logs").upsert(row, { onConflict: "person_id,day" });
     if (error) { setError(error.message); fetchLogs(); }
   }, [meId, fetchLogs]);
+
+  const createWorkout = useCallback(async (name: string): Promise<Workout | null> => {
+    if (!meId) return null;
+    const { data, error } = await supabase
+      .from("workouts")
+      .insert({ person_id: meId, name })
+      .select()
+      .single();
+    if (error) { setError(error.message); return null; }
+    const created = data as Workout;
+    setWorkouts((prev) => [...prev, created]); // otimista
+    return created;
+  }, [meId]);
 
   const renamePerson = useCallback(async (id: string, name: string, accent: Accent) => {
     setPeople((prev) => prev.map((p) => (p.id === id ? { ...p, name, accent } : p)));
@@ -206,7 +248,19 @@ export default function CalendarApp() {
         })}
       </div>
 
-      <p className="mt-4 text-center text-xs text-muted">Toque em um dia pra registrar</p>
+      <p className="mt-3 text-center text-xs text-muted">Toque em um dia pra registrar</p>
+
+      {/* Treino de hoje + frequência */}
+      <TodayPanel
+        people={people}
+        me={me}
+        todayKeyStr={tKey}
+        getLog={getLog}
+        workoutNameOf={workoutNameOf}
+        perWeek={gymPerWeek(me.id, logs, tKey)}
+        counts={workoutCounts(me.id, logs)}
+        myWorkouts={myWorkouts}
+      />
 
       {selectedDay && (
         <DayModal
@@ -215,6 +269,9 @@ export default function CalendarApp() {
           other={other}
           myLog={getLog(me.id, selectedDay)}
           otherLog={other ? getLog(other.id, selectedDay) : undefined}
+          workouts={myWorkouts}
+          otherWorkoutName={other ? workoutNameOf(other.id, selectedDay) : null}
+          onCreateWorkout={createWorkout}
           onClose={() => setSelectedDay(null)}
           onSave={(patch) => saveLog(selectedDay, patch)}
         />
@@ -238,6 +295,72 @@ export default function CalendarApp() {
         />
       )}
     </div>
+  );
+}
+
+// Painel de baixo: o que cada um treinou hoje + com que frequência eu treino.
+function TodayPanel({
+  people, me, todayKeyStr, getLog, workoutNameOf, perWeek, counts, myWorkouts,
+}: {
+  people: Person[];
+  me: Person;
+  todayKeyStr: string;
+  getLog: (pid: string, day: string) => DayLog | undefined;
+  workoutNameOf: (pid: string, day: string) => string | null;
+  perWeek: number;
+  counts: Record<string, number>;
+  myWorkouts: Workout[];
+}) {
+  const c = ACCENTS[me.accent];
+  const ranked = myWorkouts
+    .map((w) => ({ workout: w, count: counts[w.id] ?? 0 }))
+    .filter((x) => x.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  return (
+    <section className="mt-4 rounded-2xl border border-border bg-surface p-4">
+      <p className="text-[11px] uppercase tracking-wide text-muted">Treino de hoje</p>
+
+      <div className="mt-2 flex flex-col gap-1.5">
+        {people.map((p) => {
+          const log = getLog(p.id, todayKeyStr);
+          const name = workoutNameOf(p.id, todayKeyStr);
+          const accent = ACCENTS[p.accent];
+          return (
+            <div key={p.id} className="flex items-center gap-2 text-sm">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: accent.base }} />
+              <span className="shrink-0 text-muted">{p.name}</span>
+              {log?.gym ? (
+                <span className="flex min-w-0 items-center gap-1 font-semibold" style={{ color: accent.base }}>
+                  <DumbbellIcon size={14} />
+                  <span className="truncate">{name ?? "Treinou"}</span>
+                </span>
+              ) : (
+                <span className="text-muted opacity-60">ainda não treinou</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 border-t border-border pt-3">
+        <p className="text-xs text-muted">
+          Você treina{" "}
+          <span className="font-semibold" style={{ color: c.base }}>
+            {perWeek > 0 ? `~${perWeek.toString().replace(".", ",")}x por semana` : "— sem treinos ainda"}
+          </span>
+        </p>
+        {ranked.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+            {ranked.map(({ workout, count }) => (
+              <span key={workout.id}>
+                {workout.name} <span className="font-semibold" style={{ color: c.base }}>{count}x</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

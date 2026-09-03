@@ -90,6 +90,38 @@ export function bestStreak(activeDays: string[]): number {
   return best;
 }
 
+// Média de treinos por semana. Olha as últimas 4 semanas — ou desde o
+// primeiro treino, se a pessoa começou faz menos tempo que isso.
+export function gymPerWeek(pid: string, logs: Record<string, DayLog>, today: string): number {
+  const gymDays: string[] = [];
+  for (const key in logs) {
+    if (!key.startsWith(`${pid}|`)) continue;
+    if (logs[key].gym) gymDays.push(logs[key].day);
+  }
+  if (gymDays.length === 0) return 0;
+  gymDays.sort();
+
+  const windowStart = shiftKey(today, -27); // janela de 28 dias, contando hoje
+  const first = gymDays[0];
+  const from = first > windowStart ? first : windowStart;
+
+  const inWindow = gymDays.filter((d) => d >= from && d <= today).length;
+  const spanDays = Math.round((fromKey(today).getTime() - fromKey(from).getTime()) / 86_400_000) + 1;
+  const weeks = Math.max(1, spanDays / 7);
+  return Math.round((inWindow / weeks) * 10) / 10;
+}
+
+// Quantas vezes cada treino já foi feito, no histórico todo.
+export function workoutCounts(pid: string, logs: Record<string, DayLog>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const key in logs) {
+    if (!key.startsWith(`${pid}|`)) continue;
+    const log = logs[key];
+    if (log.gym && log.workout_id) counts[log.workout_id] = (counts[log.workout_id] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function earnedBadges(best: number): Badge[] {
   return BADGES.filter((b) => b.days <= best);
 }

@@ -6,12 +6,20 @@ export type Person = {
   accent: Accent;
 };
 
+export type Workout = {
+  id: string;
+  person_id: string;
+  name: string;
+  created_at?: string;
+};
+
 export type DayLog = {
   person_id: string;
   day: string; // YYYY-MM-DD
   gym: boolean;
   diet: boolean;
   notes: string;
+  workout_id: string | null;
   updated_at?: string;
 };
 
