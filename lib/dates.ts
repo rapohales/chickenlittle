@@ -24,6 +24,35 @@ export function fromKey(key: string): Date {
   return new Date(y, m - 1, d);
 }
 
+// Desloca uma chave em N dias (negativo pra voltar).
+export function shiftKey(key: string, deltaDays: number): string {
+  const d = fromKey(key);
+  d.setDate(d.getDate() + deltaDays);
+  return toKey(d);
+}
+
+// Chave do domingo da semana que contém `dayKey`.
+export function weekStartKey(dayKey: string): string {
+  const d = fromKey(dayKey);
+  d.setDate(d.getDate() - d.getDay());
+  return toKey(d);
+}
+
+// "Boa noite", "Bom dia"... conforme a hora local.
+export function greeting(d: Date = new Date()): string {
+  const h = d.getHours();
+  if (h >= 5 && h < 12) return "Bom dia";
+  if (h >= 12 && h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+const LONG_WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+// "Quinta, 10 de setembro"
+export function friendlyDate(d: Date = new Date()): string {
+  return `${LONG_WEEKDAYS[d.getDay()]}, ${d.getDate()} de ${MONTHS[d.getMonth()].toLowerCase()}`;
+}
+
 // Retorna a grade do mês (semanas começando no domingo), incluindo os
 // dias "vazios" das semanas de borda como null.
 export function monthGrid(year: number, month: number): (Date | null)[] {

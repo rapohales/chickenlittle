@@ -14,11 +14,12 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#08090c",
+  themeColor: "#07080b",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  viewportFit: "cover", // permite usar env(safe-area-inset-*) no iPhone
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

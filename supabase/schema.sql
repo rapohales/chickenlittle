@@ -5,9 +5,10 @@
 
 -- Pessoas do casal (apenas duas linhas).
 create table if not exists public.people (
-  id     text primary key,
-  name   text not null,
-  accent text not null default 'lime'
+  id          text primary key,
+  name        text not null,
+  accent      text not null default 'lime',
+  weekly_goal integer not null default 3 check (weekly_goal between 1 and 7)
 );
 
 -- Treinos nomeados de cada pessoa (Upper A, Lower B, ...).

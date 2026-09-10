@@ -1,17 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { ACCENTS, type Accent, type DayLog, type Person, type Workout } from "@/lib/types";
-import { MONTHS, WEEKDAYS, monthGrid, toKey, todayKey, weekKeys } from "@/lib/dates";
-import { gymPerWeek, workoutCounts } from "@/lib/points";
-import { ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon } from "./icons";
+import {
+  MONTHS, WEEKDAYS, friendlyDate, greeting, monthGrid, toKey, todayKey, weekStartKey,
+} from "@/lib/dates";
+import { goalOf, gymPerWeek, summarizeWeek, workoutCounts, type WeekSummary } from "@/lib/points";
+import { ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon, CloseIcon } from "./icons";
 import ProfilePicker from "./ProfilePicker";
 import DayModal from "./DayModal";
 import ProgressModal from "./ProgressModal";
+import GoalSegments from "./GoalSegments";
+import Sheet from "./Sheet";
 
 const ME_KEY = "cl-me";
 const logKey = (pid: string, day: string) => `${pid}|${day}`;
+const byId = <T extends { id: string }>(a: T, b: T) => a.id.localeCompare(b.id);
 
 export default function CalendarApp() {
   const [people, setPeople] = useState<Person[]>([]);
@@ -21,82 +27,102 @@ export default function CalendarApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const now = new Date();
-  const [view, setView] = useState({ year: now.getFullYear(), month: now.getMonth() });
+  const [view, setView] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
 
-  // ---- carregamento de dados ------------------------------------------
-  const fetchPeople = useCallback(async () => {
-    const { data, error } = await supabase.from("people").select("*").order("id");
-    if (error) { setError(error.message); return; }
-    setPeople((data as Person[]) ?? []);
-  }, []);
+  // ---- carga inicial ---------------------------------------------------
+  const loadAll = useCallback(async () => {
+    const [p, l, w] = await Promise.all([
+      supabase.from("people").select("*").order("id"),
+      supabase.from("day_logs").select("*"),
+      supabase.from("workouts").select("*").order("created_at"),
+    ]);
+    const err = p.error ?? l.error ?? w.error;
+    if (err) { setError(err.message); return; }
 
-  const fetchLogs = useCallback(async () => {
-    const { data, error } = await supabase.from("day_logs").select("*");
-    if (error) { setError(error.message); return; }
+    setPeople((p.data as Person[]) ?? []);
     const map: Record<string, DayLog> = {};
-    for (const row of (data as DayLog[]) ?? []) map[logKey(row.person_id, row.day)] = row;
+    for (const row of (l.data as DayLog[]) ?? []) map[logKey(row.person_id, row.day)] = row;
     setLogs(map);
+    setWorkouts((w.data as Workout[]) ?? []);
   }, []);
 
-  const fetchWorkouts = useCallback(async () => {
-    const { data, error } = await supabase.from("workouts").select("*").order("created_at");
-    if (error) { setError(error.message); return; }
-    setWorkouts((data as Workout[]) ?? []);
-  }, []);
-
+  // ---- realtime: aplica só o que mudou, sem refazer o fetch inteiro -----
   useEffect(() => {
     if (!isSupabaseConfigured) { setLoading(false); return; }
     setMeId(localStorage.getItem(ME_KEY));
-    (async () => {
-      await Promise.all([fetchPeople(), fetchLogs(), fetchWorkouts()]);
-      setLoading(false);
-    })();
+    loadAll().finally(() => setLoading(false));
+
+    const onLog = (payload: RealtimePostgresChangesPayload<DayLog>) => {
+      setLogs((prev) => {
+        const next = { ...prev };
+        if (payload.eventType === "DELETE") {
+          const old = payload.old;
+          if (old.person_id && old.day) delete next[logKey(old.person_id, old.day)];
+        } else {
+          const row = payload.new;
+          next[logKey(row.person_id, row.day)] = row;
+        }
+        return next;
+      });
+    };
+    const onPerson = (payload: RealtimePostgresChangesPayload<Person>) => {
+      setPeople((prev) => {
+        if (payload.eventType === "DELETE") return prev.filter((p) => p.id !== payload.old.id);
+        const row = payload.new;
+        const rest = prev.filter((p) => p.id !== row.id);
+        return [...rest, row].sort(byId);
+      });
+    };
+    const onWorkout = (payload: RealtimePostgresChangesPayload<Workout>) => {
+      setWorkouts((prev) => {
+        if (payload.eventType === "DELETE") return prev.filter((w) => w.id !== payload.old.id);
+        const row = payload.new;
+        return prev.some((w) => w.id === row.id)
+          ? prev.map((w) => (w.id === row.id ? row : w))
+          : [...prev, row];
+      });
+    };
 
     const channel = supabase
-      .channel("day_logs-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "day_logs" }, fetchLogs)
-      .on("postgres_changes", { event: "*", schema: "public", table: "people" }, fetchPeople)
-      .on("postgres_changes", { event: "*", schema: "public", table: "workouts" }, fetchWorkouts)
+      .channel("rotina-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "day_logs" }, onLog)
+      .on("postgres_changes", { event: "*", schema: "public", table: "people" }, onPerson)
+      .on("postgres_changes", { event: "*", schema: "public", table: "workouts" }, onWorkout)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [fetchPeople, fetchLogs, fetchWorkouts]);
+  }, [loadAll]);
 
-  // ---- derivados -------------------------------------------------------
+  // ---- derivados (memoizados) ----------------------------------------
+  const tKey = todayKey();
   const me = useMemo(() => people.find((p) => p.id === meId) ?? null, [people, meId]);
   const other = useMemo(() => people.find((p) => p.id !== meId) ?? null, [people, meId]);
   const getLog = useCallback((pid: string, day: string) => logs[logKey(pid, day)], [logs]);
 
-  const workoutById = useMemo(
-    () => new Map(workouts.map((w) => [w.id, w])),
-    [workouts],
-  );
-  const myWorkouts = useMemo(
-    () => workouts.filter((w) => w.person_id === meId),
-    [workouts, meId],
-  );
-  // Nome do treino registrado por uma pessoa num dia (null se não houver).
-  const workoutNameOf = useCallback(
-    (pid: string, day: string) => {
-      const id = getLog(pid, day)?.workout_id;
-      return id ? workoutById.get(id)?.name ?? null : null;
-    },
-    [getLog, workoutById],
+  const workoutById = useMemo(() => new Map(workouts.map((w) => [w.id, w])), [workouts]);
+  const myWorkouts = useMemo(() => workouts.filter((w) => w.person_id === meId), [workouts, meId]);
+  const workoutNameOf = useCallback((pid: string, day: string) => {
+    const id = logs[logKey(pid, day)]?.workout_id;
+    return id ? workoutById.get(id)?.name ?? null : null;
+  }, [logs, workoutById]);
+
+  // Resumo da semana atual de cada pessoa (meta, treinos, dieta, pontos).
+  const weekNow = useMemo<Record<string, WeekSummary>>(() => {
+    const ws = weekStartKey(tKey);
+    return Object.fromEntries(people.map((p) => [p.id, summarizeWeek(p.id, logs, ws, goalOf(p))]));
+  }, [people, logs, tKey]);
+
+  const myStats = useMemo(
+    () => (me ? { perWeek: gymPerWeek(me.id, logs, tKey), counts: workoutCounts(me.id, logs) } : null),
+    [me, logs, tKey],
   );
 
-  const weekStats = useCallback((pid: string) => {
-    const wk = weekKeys();
-    let gym = 0, diet = 0;
-    for (const k of wk) {
-      const l = getLog(pid, k);
-      if (l?.gym) gym++;
-      if (l?.diet) diet++;
-    }
-    return { gym, diet };
-  }, [getLog]);
+  const cells = useMemo(() => monthGrid(view.year, view.month), [view.year, view.month]);
 
   // ---- mutações --------------------------------------------------------
   const saveLog = useCallback(async (
@@ -108,29 +134,29 @@ export default function CalendarApp() {
     setLogs((prev) => ({ ...prev, [logKey(meId, day)]: row })); // otimista
     setSelectedDay(null);
     const { error } = await supabase.from("day_logs").upsert(row, { onConflict: "person_id,day" });
-    if (error) { setError(error.message); fetchLogs(); }
-  }, [meId, fetchLogs]);
+    if (error) { setError(error.message); loadAll(); }
+  }, [meId, loadAll]);
 
   const createWorkout = useCallback(async (name: string): Promise<Workout | null> => {
     if (!meId) return null;
-    const { data, error } = await supabase
-      .from("workouts")
-      .insert({ person_id: meId, name })
-      .select()
-      .single();
+    const { data, error } = await supabase.from("workouts").insert({ person_id: meId, name }).select().single();
     if (error) { setError(error.message); return null; }
     const created = data as Workout;
-    setWorkouts((prev) => [...prev, created]); // otimista
+    setWorkouts((prev) => (prev.some((w) => w.id === created.id) ? prev : [...prev, created]));
     return created;
   }, [meId]);
 
-  const renamePerson = useCallback(async (id: string, name: string, accent: Accent) => {
-    setPeople((prev) => prev.map((p) => (p.id === id ? { ...p, name, accent } : p)));
-    const { error } = await supabase.from("people").update({ name, accent }).eq("id", id);
-    if (error) setError(error.message);
-  }, []);
+  const updatePerson = useCallback(async (id: string, patch: Partial<Pick<Person, "name" | "accent" | "weekly_goal">>) => {
+    setPeople((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p))); // otimista
+    const { error } = await supabase.from("people").update(patch).eq("id", id);
+    if (error) { setError(error.message); loadAll(); } // desfaz o otimismo
+  }, [loadAll]);
 
-  const pickMe = (id: string) => { localStorage.setItem(ME_KEY, id); setMeId(id); setShowSettings(false); };
+  const pickMe = useCallback((id: string) => {
+    localStorage.setItem(ME_KEY, id);
+    setMeId(id);
+    setShowSettings(false);
+  }, []);
 
   // ---- estados de borda ------------------------------------------------
   if (!isSupabaseConfigured) return <SetupScreen />;
@@ -138,74 +164,88 @@ export default function CalendarApp() {
   if (error && people.length === 0) return <ErrorScreen message={error} />;
   if (!me) return <ProfilePicker people={people} onPick={pickMe} />;
 
-  // ---- calendário ------------------------------------------------------
-  const cells = monthGrid(view.year, view.month);
-  const tKey = todayKey();
-  const goMonth = (delta: number) => {
+  const c = ACCENTS[me.accent];
+  const goMonth = (delta: number) =>
     setView((v) => {
       const d = new Date(v.year, v.month + delta, 1);
       return { year: d.getFullYear(), month: d.getMonth() };
     });
-  };
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-10">
+    <div className="mx-auto flex w-full max-w-md flex-col px-4 pb-12 animate-rise">
       {/* Cabeçalho */}
-      <header className="flex items-center justify-between pt-6 pb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🥥</span>
-          <div>
-            <h1 className="text-base font-bold leading-none">Rotina</h1>
-          </div>
+      <header className="flex items-start justify-between gap-3 pt-6 pb-5">
+        <div className="min-w-0">
+          <p className="text-xs text-muted">{friendlyDate()}</p>
+          <h1 className="mt-0.5 truncate text-2xl font-bold tracking-tight">
+            {greeting()}, {me.name.split(" ")[0]}
+          </h1>
         </div>
         <button
           onClick={() => setShowSettings(true)}
-          className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm transition active:scale-95"
+          className="card flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3 text-sm transition active:scale-95"
+          aria-label="Perfis e configurações"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
-            style={{ background: ACCENTS[me.accent].soft, color: ACCENTS[me.accent].base }}>
+          <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
+            style={{ background: c.soft, color: c.base }}>
             {me.name.charAt(0).toUpperCase()}
           </span>
-          <span className="font-medium">{me.name}</span>
+          <span className="font-medium">Perfil</span>
         </button>
       </header>
 
-      {/* Resumo compacto da semana */}
+      {error && (
+        <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button onClick={() => setError(null)} aria-label="Fechar aviso" className="shrink-0 opacity-70 hover:opacity-100">
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Meta da semana — barra de progresso dos dois */}
       <button
         onClick={() => setShowProgress(true)}
-        className="flex items-center gap-2 py-1 text-left transition active:opacity-60"
+        className="card flex items-center gap-2 rounded-2xl px-3 py-2.5 text-left transition active:scale-[0.99]"
       >
-        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
-          {people.map((p, i) => {
-            const c = ACCENTS[p.accent];
-            const s = weekStats(p.id);
+        <div className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto">
+          {people.map((p) => {
+            const w = weekNow[p.id];
+            const pc = ACCENTS[p.accent];
             return (
-              <span key={p.id} className="flex min-w-0 shrink-0 items-center gap-1.5 text-[13px]">
-                {i > 0 && <span className="text-muted">·</span>}
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: c.base }} />
-                <span className="max-w-[64px] truncate text-muted">{p.name}</span>
-                <span className="flex shrink-0 items-center gap-0.5 font-semibold" style={{ color: c.base }}>
-                  <DumbbellIcon size={12} />{s.gym}
+              <div key={p.id} className="flex shrink-0 items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                  style={{ background: pc.soft, color: pc.base }}>
+                  {p.name.charAt(0).toUpperCase()}
                 </span>
-                <span className="flex shrink-0 items-center gap-0.5 font-semibold" style={{ color: c.base }}>
-                  <SaladIcon size={12} />{s.diet}
+                <div className="flex flex-col gap-1">
+                  <span className="max-w-[72px] truncate text-[11px] font-medium leading-none text-muted">
+                    {p.name.split(" ")[0]}
+                  </span>
+                  <GoalSegments done={w.gym} goal={w.goal} color={pc.base} />
+                </div>
+                <span className="text-xs font-bold tabular-nums" style={{ color: w.hit ? pc.base : "var(--foreground)" }}>
+                  {w.gym}/{w.goal}
                 </span>
-              </span>
+                <span className="flex items-center gap-0.5 text-[11px] font-semibold tabular-nums" style={{ color: pc.base }}>
+                  <SaladIcon size={11} />{w.diet}
+                </span>
+              </div>
             );
           })}
-        </span>
-        <span className="shrink-0 text-xs text-muted">progresso ›</span>
+        </div>
+        <ChevronRight size={16} className="shrink-0 text-muted" />
       </button>
 
       {/* Navegação do mês */}
       <div className="mt-6 mb-2 flex items-center justify-between">
-        <button onClick={() => goMonth(-1)} className="rounded-full border border-border bg-surface p-2 transition active:scale-90">
+        <button onClick={() => goMonth(-1)} className="card rounded-full p-2 transition active:scale-90" aria-label="Mês anterior">
           <ChevronLeft />
         </button>
-        <h2 className="text-lg font-bold">
-          {MONTHS[view.month]} <span className="text-muted font-normal">{view.year}</span>
+        <h2 className="text-lg font-bold tracking-tight">
+          {MONTHS[view.month]} <span className="font-normal text-muted">{view.year}</span>
         </h2>
-        <button onClick={() => goMonth(1)} className="rounded-full border border-border bg-surface p-2 transition active:scale-90">
+        <button onClick={() => goMonth(1)} className="card rounded-full p-2 transition active:scale-90" aria-label="Próximo mês">
           <ChevronRight />
         </button>
       </div>
@@ -227,15 +267,14 @@ export default function CalendarApp() {
               onClick={() => setSelectedDay(key)}
               className="relative flex aspect-square flex-col items-center rounded-xl border p-1 transition-all duration-100 active:translate-y-px active:scale-[0.96] active:shadow-none disabled:opacity-30 disabled:shadow-none"
               style={{
-                borderColor: isToday ? ACCENTS[me.accent].base : "var(--border)",
-                background: isToday ? ACCENTS[me.accent].soft : "var(--surface-2)",
+                borderColor: isToday ? c.base : "var(--border)",
+                background: isToday ? c.soft : "var(--surface-2)",
                 boxShadow: isToday
-                  ? `0 2px 0 0 ${ACCENTS[me.accent].base}66`
+                  ? `0 2px 0 0 ${c.base}66, 0 0 18px -4px ${c.base}55`
                   : "0 2px 0 0 rgba(0,0,0,0.45)",
               }}
             >
-              <span className={`text-[13px] font-bold ${isToday ? "" : "text-foreground"}`}
-                style={isToday ? { color: ACCENTS[me.accent].base } : undefined}>
+              <span className="text-[13px] font-bold" style={{ color: isToday ? c.base : "var(--foreground)" }}>
                 {date.getDate()}
               </span>
               <div className="mt-auto flex w-full flex-col gap-0.5">
@@ -248,19 +287,21 @@ export default function CalendarApp() {
         })}
       </div>
 
-      <p className="mt-3 text-center text-xs text-muted">Toque em um dia pra registrar</p>
+      <p className="mt-3 text-center text-[11px] text-muted">Toque em um dia pra registrar</p>
 
       {/* Treino de hoje + frequência */}
-      <TodayPanel
-        people={people}
-        me={me}
-        todayKeyStr={tKey}
-        getLog={getLog}
-        workoutNameOf={workoutNameOf}
-        perWeek={gymPerWeek(me.id, logs, tKey)}
-        counts={workoutCounts(me.id, logs)}
-        myWorkouts={myWorkouts}
-      />
+      {myStats && (
+        <TodayPanel
+          people={people}
+          me={me}
+          todayKeyStr={tKey}
+          getLog={getLog}
+          workoutNameOf={workoutNameOf}
+          perWeek={myStats.perWeek}
+          counts={myStats.counts}
+          myWorkouts={myWorkouts}
+        />
+      )}
 
       {selectedDay && (
         <DayModal
@@ -277,20 +318,14 @@ export default function CalendarApp() {
         />
       )}
 
-      {showProgress && (
-        <ProgressModal
-          people={people}
-          logs={logs}
-          onClose={() => setShowProgress(false)}
-        />
-      )}
+      {showProgress && <ProgressModal people={people} logs={logs} onClose={() => setShowProgress(false)} />}
 
       {showSettings && (
         <SettingsSheet
           people={people}
           meId={meId}
           onPickMe={pickMe}
-          onRename={renamePerson}
+          onUpdate={updatePerson}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -298,7 +333,7 @@ export default function CalendarApp() {
   );
 }
 
-// Painel de baixo: o que cada um treinou hoje + com que frequência eu treino.
+// ---- painel de baixo -------------------------------------------------
 function TodayPanel({
   people, me, todayKeyStr, getLog, workoutNameOf, perWeek, counts, myWorkouts,
 }: {
@@ -318,25 +353,25 @@ function TodayPanel({
     .sort((a, b) => b.count - a.count);
 
   return (
-    <section className="mt-4 rounded-2xl border border-border bg-surface p-4">
-      <p className="text-[11px] uppercase tracking-wide text-muted">Treino de hoje</p>
+    <section className="card mt-4 rounded-2xl p-4">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-muted">Treino de hoje</p>
 
-      <div className="mt-2 flex flex-col gap-1.5">
+      <div className="mt-2.5 flex flex-col gap-2">
         {people.map((p) => {
           const log = getLog(p.id, todayKeyStr);
           const name = workoutNameOf(p.id, todayKeyStr);
-          const accent = ACCENTS[p.accent];
+          const pc = ACCENTS[p.accent];
           return (
             <div key={p.id} className="flex items-center gap-2 text-sm">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: accent.base }} />
-              <span className="shrink-0 text-muted">{p.name}</span>
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: pc.base, boxShadow: `0 0 6px ${pc.base}` }} />
+              <span className="shrink-0 text-muted">{p.name.split(" ")[0]}</span>
               {log?.gym ? (
-                <span className="flex min-w-0 items-center gap-1 font-semibold" style={{ color: accent.base }}>
+                <span className="flex min-w-0 items-center gap-1 font-semibold" style={{ color: pc.base }}>
                   <DumbbellIcon size={14} />
                   <span className="truncate">{name ?? "Treinou"}</span>
                 </span>
               ) : (
-                <span className="text-muted opacity-60">ainda não treinou</span>
+                <span className="text-muted/60">ainda não treinou</span>
               )}
             </div>
           );
@@ -354,7 +389,7 @@ function TodayPanel({
           <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
             {ranked.map(({ workout, count }) => (
               <span key={workout.id}>
-                {workout.name} <span className="font-semibold" style={{ color: c.base }}>{count}x</span>
+                {workout.name} <span className="font-semibold tabular-nums" style={{ color: c.base }}>{count}x</span>
               </span>
             ))}
           </div>
@@ -367,102 +402,123 @@ function TodayPanel({
 // Marca compacta de uma pessoa dentro da célula do dia.
 function DayMark({ accent, log }: { accent: (typeof ACCENTS)[Accent]; log: DayLog | undefined }) {
   const gym = log?.gym, diet = log?.diet;
-  const on = gym || diet;
   return (
     <div className="flex h-1.5 items-center justify-center gap-0.5">
       <span className="h-1.5 flex-1 rounded-full transition-colors"
-        style={{ background: gym ? accent.base : "var(--surface-2)" }} />
+        style={{ background: gym ? accent.base : "var(--surface-3)" }} />
       <span className="h-1.5 flex-1 rounded-full transition-colors"
-        style={{ background: diet ? accent.base : "var(--surface-2)" }} />
-      {!on && <span className="sr-only">nada</span>}
+        style={{ background: diet ? accent.base : "var(--surface-3)" }} />
     </div>
   );
 }
 
-// ---- telas auxiliares --------------------------------------------------
+// ---- configurações ----------------------------------------------------
 function SettingsSheet({
-  people, meId, onPickMe, onRename, onClose,
+  people, meId, onPickMe, onUpdate, onClose,
 }: {
   people: Person[];
   meId: string | null;
   onPickMe: (id: string) => void;
-  onRename: (id: string, name: string, accent: Accent) => void;
+  onUpdate: (id: string, patch: Partial<Pick<Person, "name" | "accent" | "weekly_goal">>) => void;
   onClose: () => void;
 }) {
-  const [drafts, setDrafts] = useState(() =>
-    Object.fromEntries(people.map((p) => [p.id, { name: p.name, accent: p.accent }])) as Record<
-      string, { name: string; accent: Accent }
-    >,
+  const [names, setNames] = useState<Record<string, string>>(() =>
+    Object.fromEntries(people.map((p) => [p.id, p.name])),
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 animate-fade sm:items-center" onClick={onClose}>
-      <div className="w-full max-w-md rounded-t-3xl border border-border bg-surface p-5 pb-8 animate-pop sm:rounded-3xl"
-        onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold">Perfis</h2>
-        <p className="text-sm text-muted">Escolha quem é você e ajuste os nomes/cores.</p>
+    <Sheet eyebrow="Configurações" title="Perfis" onClose={onClose}>
+      <p className="text-sm text-muted">Quem é você, nomes, cores e a meta de treinos de cada um.</p>
 
-        <div className="mt-4 flex flex-col gap-4">
-          {people.map((p) => {
-            const d = drafts[p.id];
-            const isMe = p.id === meId;
-            return (
-              <div key={p.id} className="rounded-2xl border border-border bg-surface-2 p-3"
-                style={{ borderColor: isMe ? ACCENTS[d.accent].base : "var(--border)" }}>
-                <div className="flex items-center gap-2">
-                  <input
-                    value={d.name}
-                    onChange={(e) => setDrafts((s) => ({ ...s, [p.id]: { ...s[p.id], name: e.target.value } }))}
-                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-muted"
-                    placeholder="Nome"
-                  />
-                  <button
-                    onClick={() => onRename(p.id, d.name.trim() || p.name, d.accent)}
-                    className="rounded-lg border border-border bg-surface p-2 text-muted transition active:scale-90 hover:text-foreground"
-                    title="Salvar nome/cor"
-                  >
-                    <PencilIcon />
-                  </button>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  {(Object.keys(ACCENTS) as Accent[]).map((a) => (
-                    <button
-                      key={a}
-                      onClick={() => {
-                        setDrafts((s) => ({ ...s, [p.id]: { ...s[p.id], accent: a } }));
-                        onRename(p.id, d.name.trim() || p.name, a);
-                      }}
-                      className="h-6 w-6 rounded-full border-2 transition active:scale-90"
-                      style={{ background: ACCENTS[a].base, borderColor: d.accent === a ? "#fff" : "transparent" }}
-                      aria-label={ACCENTS[a].label}
-                    />
-                  ))}
-                </div>
+      <div className="mt-4 flex flex-col gap-3">
+        {people.map((p) => {
+          const isMe = p.id === meId;
+          const pc = ACCENTS[p.accent];
+          const goal = goalOf(p);
+          const name = names[p.id] ?? p.name;
+          const dirty = name.trim() !== p.name && name.trim() !== "";
+
+          return (
+            <div key={p.id} className="card rounded-2xl p-3"
+              style={isMe ? { borderColor: pc.base, boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 3px ${pc.soft}` } : undefined}>
+              {/* Nome */}
+              <div className="flex items-center gap-2">
+                <input
+                  value={name}
+                  onChange={(e) => setNames((s) => ({ ...s, [p.id]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" && dirty) onUpdate(p.id, { name: name.trim() }); }}
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-muted"
+                  placeholder="Nome"
+                />
                 <button
-                  onClick={() => onPickMe(p.id)}
-                  disabled={isMe}
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg py-2 text-sm font-semibold transition active:scale-95 disabled:opacity-60"
-                  style={{
-                    background: isMe ? ACCENTS[d.accent].soft : "var(--surface)",
-                    color: isMe ? ACCENTS[d.accent].base : "var(--foreground)",
-                    border: "1px solid var(--border)",
-                  }}
+                  onClick={() => dirty && onUpdate(p.id, { name: name.trim() })}
+                  disabled={!dirty}
+                  className="rounded-lg border border-border bg-surface p-2 transition active:scale-90 disabled:opacity-40"
+                  style={dirty ? { color: pc.base, borderColor: pc.base } : { color: "var(--muted)" }}
+                  title="Salvar nome"
                 >
-                  {isMe ? <><CheckIcon size={16} /> Sou eu</> : "Entrar como este"}
+                  {dirty ? <CheckIcon size={16} /> : <PencilIcon />}
                 </button>
               </div>
-            );
-          })}
-        </div>
 
-        <button onClick={onClose} className="mt-5 w-full rounded-xl border border-border bg-surface-2 py-3 text-sm font-medium transition active:scale-95">
-          Fechar
-        </button>
+              {/* Cor */}
+              <div className="mt-2.5 flex items-center gap-2">
+                {(Object.keys(ACCENTS) as Accent[]).map((a) => (
+                  <button
+                    key={a}
+                    onClick={() => onUpdate(p.id, { accent: a })}
+                    className="h-6 w-6 rounded-full border-2 transition active:scale-90"
+                    style={{ background: ACCENTS[a].base, borderColor: p.accent === a ? "#fff" : "transparent" }}
+                    aria-label={ACCENTS[a].label}
+                  />
+                ))}
+              </div>
+
+              {/* Meta semanal */}
+              <div className="mt-3 flex items-center justify-between rounded-xl bg-surface px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium">Meta semanal</p>
+                  <p className="text-[11px] text-muted">dias de academia por semana</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => onUpdate(p.id, { weekly_goal: goal - 1 })}
+                    disabled={goal <= 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-2 text-lg leading-none transition active:scale-90 disabled:opacity-30"
+                    aria-label="Diminuir meta"
+                  >−</button>
+                  <span className="w-7 text-center text-base font-bold tabular-nums" style={{ color: pc.base }}>{goal}</span>
+                  <button
+                    onClick={() => onUpdate(p.id, { weekly_goal: goal + 1 })}
+                    disabled={goal >= 7}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-2 text-lg leading-none transition active:scale-90 disabled:opacity-30"
+                    aria-label="Aumentar meta"
+                  >+</button>
+                </div>
+              </div>
+
+              {/* Sou eu */}
+              <button
+                onClick={() => onPickMe(p.id)}
+                disabled={isMe}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border py-2 text-sm font-semibold transition active:scale-95 disabled:opacity-70"
+                style={{ background: isMe ? pc.soft : "var(--surface)", color: isMe ? pc.base : "var(--foreground)" }}
+              >
+                {isMe ? <><CheckIcon size={16} /> Sou eu</> : "Entrar como este"}
+              </button>
+            </div>
+          );
+        })}
       </div>
-    </div>
+
+      <button onClick={onClose} className="mt-5 w-full rounded-xl border border-border bg-surface-2 py-3 text-sm font-medium transition active:scale-95">
+        Fechar
+      </button>
+    </Sheet>
   );
 }
 
+// ---- telas de borda ---------------------------------------------------
 function Splash() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3">
@@ -479,8 +535,8 @@ function ErrorScreen({ message }: { message: string }) {
       <h1 className="text-lg font-bold">Não consegui carregar os dados</h1>
       <p className="text-sm text-muted">{message}</p>
       <p className="text-xs text-muted">
-        Verifique se você rodou o <code className="text-foreground">supabase/schema.sql</code> no
-        SQL Editor do Supabase.
+        Verifique se você rodou o <code className="text-foreground">supabase/schema.sql</code> e as
+        migrações em <code className="text-foreground">supabase/migrations/</code> no SQL Editor do Supabase.
       </p>
     </div>
   );

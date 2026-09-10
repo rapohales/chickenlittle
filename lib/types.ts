@@ -4,6 +4,7 @@ export type Person = {
   id: string;
   name: string;
   accent: Accent;
+  weekly_goal?: number; // dias de academia por semana (1–7). Opcional pra tolerar banco antigo.
 };
 
 export type Workout = {
