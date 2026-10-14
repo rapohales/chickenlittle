@@ -8,7 +8,7 @@ import {
   MONTHS, WEEKDAYS, friendlyDate, greeting, monthGrid, toKey, todayKey, weekStartKey,
 } from "@/lib/dates";
 import { goalOf, gymPerWeek, summarizeWeek, workoutCounts, type WeekSummary } from "@/lib/points";
-import { ChartIcon, ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon, CloseIcon } from "./icons";
+import { ChartIcon, ExternalIcon, ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon, CloseIcon } from "./icons";
 import ProfilePicker from "./ProfilePicker";
 import DayModal from "./DayModal";
 import ProgressModal from "./ProgressModal";
@@ -322,6 +322,24 @@ export default function CalendarApp() {
           myWorkouts={myWorkouts}
         />
       )}
+
+      {/* Atalho pro site de dieta */}
+      <a
+        href="https://diet-o.vercel.app"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="card mt-3 flex items-center gap-3 rounded-2xl p-3 transition active:scale-[0.99]"
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+          style={{ background: c.soft, color: c.base }}>
+          <SaladIcon size={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">Diet-o</span>
+          <span className="block truncate text-xs text-muted">Abrir o site da dieta</span>
+        </span>
+        <ExternalIcon size={16} className="shrink-0 text-muted" />
+      </a>
 
       {selectedDay && (
         <DayModal
