@@ -91,6 +91,16 @@ body {
   animation: grow-x 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+/* Barras dos gráficos "sobem" da base. */
+@keyframes grow-y {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+.animate-grow-y {
+  transform-origin: bottom;
+  animation: grow-y 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 /* Entrada suave da tela principal. */
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(6px); }
@@ -99,5 +109,5 @@ body {
 .animate-rise { animation: rise-in 0.3s ease-out both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-pop, .animate-fade, .animate-grow, .animate-rise { animation: none; }
+  .animate-pop, .animate-fade, .animate-grow, .animate-grow-y, .animate-rise { animation: none; }
 }

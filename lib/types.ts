@@ -26,10 +26,15 @@ export type DayLog = {
 
 // Cores de cada "accent" usadas na UI. Mantidas em JS (e não só no Tailwind)
 // para conseguirmos gerar estilos dinâmicos por pessoa.
-export const ACCENTS: Record<Accent, { base: string; soft: string; text: string; label: string }> = {
-  lime:   { base: "#a3e635", soft: "rgba(163,230,53,0.15)",  text: "#bef264", label: "Verde" },
-  rose:   { base: "#fb7185", soft: "rgba(251,113,133,0.15)", text: "#fda4af", label: "Rosa" },
-  orange: { base: "#fb923c", soft: "rgba(251,146,60,0.15)",  text: "#fdba74", label: "Laranja" },
-  sky:    { base: "#38bdf8", soft: "rgba(56,189,248,0.15)",  text: "#7dd3fc", label: "Azul" },
-  violet: { base: "#a78bfa", soft: "rgba(167,139,250,0.15)", text: "#c4b5fd", label: "Roxo" },
+// `chart` é um tom um degrau mais escuro, usado como preenchimento de barras:
+// validado (scripts do dataviz) pra ficar na faixa de luminosidade e com
+// contraste >= 3:1 contra o fundo escuro. Os gráficos mostram uma pessoa por
+// vez, porque alguns pares (laranja×rosa, laranja×verde) ficam parecidos
+// demais pra dividir o mesmo gráfico.
+export const ACCENTS: Record<Accent, { base: string; soft: string; text: string; chart: string; label: string }> = {
+  lime:   { base: "#a3e635", soft: "rgba(163,230,53,0.15)",  text: "#bef264", chart: "#65a30d", label: "Verde" },
+  rose:   { base: "#fb7185", soft: "rgba(251,113,133,0.15)", text: "#fda4af", chart: "#f43f5e", label: "Rosa" },
+  orange: { base: "#fb923c", soft: "rgba(251,146,60,0.15)",  text: "#fdba74", chart: "#ea580c", label: "Laranja" },
+  sky:    { base: "#38bdf8", soft: "rgba(56,189,248,0.15)",  text: "#7dd3fc", chart: "#0284c7", label: "Azul" },
+  violet: { base: "#a78bfa", soft: "rgba(167,139,250,0.15)", text: "#c4b5fd", chart: "#8b5cf6", label: "Roxo" },
 };

@@ -8,10 +8,11 @@ import {
   MONTHS, WEEKDAYS, friendlyDate, greeting, monthGrid, toKey, todayKey, weekStartKey,
 } from "@/lib/dates";
 import { goalOf, gymPerWeek, summarizeWeek, workoutCounts, type WeekSummary } from "@/lib/points";
-import { ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon, CloseIcon } from "./icons";
+import { ChartIcon, ChevronLeft, ChevronRight, DumbbellIcon, SaladIcon, PencilIcon, CheckIcon, CloseIcon } from "./icons";
 import ProfilePicker from "./ProfilePicker";
 import DayModal from "./DayModal";
 import ProgressModal from "./ProgressModal";
+import ReportModal from "./ReportModal";
 import GoalSegments from "./GoalSegments";
 import Sheet from "./Sheet";
 
@@ -34,6 +35,7 @@ export default function CalendarApp() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   // ---- carga inicial ---------------------------------------------------
   const loadAll = useCallback(async () => {
@@ -181,17 +183,26 @@ export default function CalendarApp() {
             {greeting()}, {me.name.split(" ")[0]}
           </h1>
         </div>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="card flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3 text-sm transition active:scale-95"
-          aria-label="Perfis e configurações"
-        >
-          <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
-            style={{ background: c.soft, color: c.base }}>
-            {me.name.charAt(0).toUpperCase()}
-          </span>
-          <span className="font-medium">Perfil</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => setShowReport(true)}
+            className="card flex h-10 w-10 items-center justify-center rounded-full text-muted transition active:scale-95 hover:text-foreground"
+            aria-label="Relatório mensal e anual"
+            title="Relatório"
+          >
+            <ChartIcon />
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="card flex h-10 items-center justify-center rounded-full px-1.5 transition active:scale-95"
+            aria-label="Perfis e configurações"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
+              style={{ background: c.soft, color: c.base }}>
+              {me.name.charAt(0).toUpperCase()}
+            </span>
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -242,9 +253,14 @@ export default function CalendarApp() {
         <button onClick={() => goMonth(-1)} className="card rounded-full p-2 transition active:scale-90" aria-label="Mês anterior">
           <ChevronLeft />
         </button>
-        <h2 className="text-lg font-bold tracking-tight">
+        <button
+          onClick={() => setShowReport(true)}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-lg font-bold tracking-tight transition active:scale-95"
+          title="Ver relatório do mês"
+        >
           {MONTHS[view.month]} <span className="font-normal text-muted">{view.year}</span>
-        </h2>
+          <ChartIcon size={14} className="text-muted" />
+        </button>
         <button onClick={() => goMonth(1)} className="card rounded-full p-2 transition active:scale-90" aria-label="Próximo mês">
           <ChevronRight />
         </button>
@@ -274,10 +290,10 @@ export default function CalendarApp() {
                   : "0 2px 0 0 rgba(0,0,0,0.45)",
               }}
             >
-              <span className="text-[13px] font-bold" style={{ color: isToday ? c.base : "var(--foreground)" }}>
+              <span className="text-[12px] font-bold leading-none" style={{ color: isToday ? c.base : "var(--foreground)" }}>
                 {date.getDate()}
               </span>
-              <div className="mt-auto flex w-full flex-col gap-0.5">
+              <div className="mt-auto flex w-full flex-col items-center gap-[3px] pb-0.5">
                 {people.map((p) => (
                   <DayMark key={p.id} accent={ACCENTS[p.accent]} log={getLog(p.id, key)} />
                 ))}
@@ -287,7 +303,11 @@ export default function CalendarApp() {
         })}
       </div>
 
-      <p className="mt-3 text-center text-[11px] text-muted">Toque em um dia pra registrar</p>
+      <div className="mt-3 flex items-center justify-center gap-3 text-[11px] text-muted">
+        <span>Toque num dia pra registrar</span>
+        <span className="flex items-center gap-1"><DumbbellIcon size={12} /> treino</span>
+        <span className="flex items-center gap-1"><SaladIcon size={12} /> comi bem</span>
+      </div>
 
       {/* Treino de hoje + frequência */}
       {myStats && (
@@ -319,6 +339,17 @@ export default function CalendarApp() {
       )}
 
       {showProgress && <ProgressModal people={people} logs={logs} onClose={() => setShowProgress(false)} />}
+
+      {showReport && (
+        <ReportModal
+          people={people}
+          logs={logs}
+          workouts={workouts}
+          initialYear={view.year}
+          initialMonth={view.month}
+          onClose={() => setShowReport(false)}
+        />
+      )}
 
       {showSettings && (
         <SettingsSheet
@@ -399,15 +430,19 @@ function TodayPanel({
   );
 }
 
-// Marca compacta de uma pessoa dentro da célula do dia.
+// Uma linha por pessoa dentro da célula: halter (treinou) e prato (comeu
+// bem). Feito = ícone na cor da pessoa com brilho; não feito = fantasma bem
+// apagado, que mantém o layout estável sem competir pela atenção.
 function DayMark({ accent, log }: { accent: (typeof ACCENTS)[Accent]; log: DayLog | undefined }) {
-  const gym = log?.gym, diet = log?.diet;
+  const gym = !!log?.gym, diet = !!log?.diet;
+  const on = (done: boolean) =>
+    done
+      ? { color: accent.base, filter: `drop-shadow(0 0 3px ${accent.base}88)` }
+      : { color: "var(--border-strong)", opacity: 0.4 };
   return (
-    <div className="flex h-1.5 items-center justify-center gap-0.5">
-      <span className="h-1.5 flex-1 rounded-full transition-colors"
-        style={{ background: gym ? accent.base : "var(--surface-3)" }} />
-      <span className="h-1.5 flex-1 rounded-full transition-colors"
-        style={{ background: diet ? accent.base : "var(--surface-3)" }} />
+    <div className="flex items-center justify-center gap-[3px] leading-none">
+      <span style={on(gym)}><DumbbellIcon size={11} /></span>
+      <span style={on(diet)}><SaladIcon size={11} /></span>
     </div>
   );
 }
